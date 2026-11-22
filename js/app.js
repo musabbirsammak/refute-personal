@@ -72,7 +72,11 @@ function renderHeader() {
 }
 
 async function render() {
-  const root = viewEl();
+  // A fresh element for every page, so click handlers from earlier pages
+  // (attached to the page element) can't pile up and fire on this one.
+  const old = viewEl();
+  const root = old.cloneNode(false);
+  old.replaceWith(root);
   const hash = location.hash.slice(1) || '/';
   if (/error_description=/.test(hash)) {
     const p = new URLSearchParams(hash.replace(/^.*?(error)/, '$1'));
