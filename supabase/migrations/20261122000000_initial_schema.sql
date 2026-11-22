@@ -171,7 +171,8 @@ begin
   end if;
   update public.app_settings
      set teacher_name = left(trim(coalesce(p_name, '')), 120),
-         institution = left(trim(coalesce(p_institution, '')), 200);
+         institution = left(trim(coalesce(p_institution, '')), 200)
+   where id = true;
   return public.get_site();
 end;
 $$;
