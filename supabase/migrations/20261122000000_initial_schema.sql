@@ -387,4 +387,4 @@ grant execute on function public.start_preview(uuid)              to authenticat
 grant execute on function public.get_site()                       to anon, authenticated;
 grant execute on function public.get_task_public(uuid)            to anon, authenticated;
 grant execute on function public.start_attempt(uuid, text, text)  to anon, authenticated;
-grant execute on function public.get_attempt_public(uuid, text)   to anon, authenticated;
+grant execute on function public.get_attempt_public(uuid, text)   to anon, authenticated, service_role;

@@ -1,3 +1,4 @@
+// @ts-nocheck  (plain JavaScript: the editor's type warnings don't apply)
 // Refute: the server function that runs every debate turn with the teacher's
 // AI key. Deploy it to Supabase as an Edge Function named "refute-ai" with
 // JWT verification switched off (it checks access itself). See the README.
@@ -32,6 +33,7 @@ export const LANGUAGES = {
   },
 };
 
+export const AI_TIMEOUT_MS = 45000;
 export const MAX_MESSAGE_LENGTH = 2000;
 
 export function characterName(persona) {
@@ -347,13 +349,22 @@ async function providerError(res, provider, model) {
   return new AiError(`${provider} returned an error (${s}): ${detail}`, 'other', 502);
 }
 
-export function makeProviders(fetchImpl) {
+export function makeProviders(fetchImpl, { timeoutMs = AI_TIMEOUT_MS } = {}) {
+  // Each AI call gets at most 45 seconds, so a turn (two calls) ends well
+  // before Supabase stops the function (150 seconds on the free plan).
   const doFetch = async (url, init, provider, model) => {
     let res;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      res = await fetchImpl(url, init);
+      res = await fetchImpl(url, { ...init, signal: controller.signal });
     } catch (_) {
+      if (controller.signal.aborted) {
+        throw new AiError(`${provider} took too long to reply. Press Retry. If it keeps happening, choose a faster model (a Flash model) in Settings.`, 'network', 504);
+      }
       throw new AiError(`Couldn't reach ${provider}. Press Retry.`, 'network', 502);
+    } finally {
+      clearTimeout(timer);
     }
     if (!res.ok) throw await providerError(res, provider, model);
     return res;
