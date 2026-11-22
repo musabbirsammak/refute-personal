@@ -84,6 +84,38 @@ def send(page, text):
 with sync_playwright() as p:
     chrome = os.environ.get('CHROME_PATH')
     browser = p.chromium.launch(executable_path=chrome, headless=True) if chrome else p.chromium.launch(headless=True)
+    # ── Email confirmation: the link signs the teacher in on a fresh page ──
+    # (Supabase signs the account in from the link; the site must then claim it.)
+    cctx = browser.new_context(viewport={'width': 1280, 'height': 860})
+    wire_routes(cctx)
+    cctx.add_init_script("""if (!localStorage.getItem('mockdb.v2')) localStorage.setItem('mockdb.v2', JSON.stringify({
+      users: [{ id: 'u-confirmed', email: 'new@diu.edu.bd', password: 'secret123', user_metadata: { full_name: 'Confirmed Teacher' } }],
+      session: { user: { id: 'u-confirmed', email: 'new@diu.edu.bd', user_metadata: { full_name: 'Confirmed Teacher' } }, access_token: 'token-u-confirmed' },
+      app_settings: { owner_id: null, teacher_name: '', institution: '' },
+      ai_settings: null, courses: [], tasks: [], attempts: [] }));""")
+    cpage = cctx.new_page(); wire(cpage)
+    cpage.goto(BASE)
+    expect(cpage.get_by_role('heading', name='Settings')).to_be_visible()
+    expect(cpage.locator('[data-teacher]')).to_have_text('Confirmed Teacher')
+    cctx.close()
+    # Signing in from the sign-in page also claims an unclaimed site
+    # (for when the email link was opened on another device).
+    cctx = browser.new_context(viewport={'width': 1280, 'height': 860})
+    wire_routes(cctx)
+    cctx.add_init_script("""if (!localStorage.getItem('mockdb.v2')) localStorage.setItem('mockdb.v2', JSON.stringify({
+      users: [{ id: 'u-confirmed', email: 'new@diu.edu.bd', password: 'secret123', user_metadata: { full_name: 'Confirmed Teacher' } }],
+      session: null, app_settings: { owner_id: null, teacher_name: '', institution: '' },
+      ai_settings: null, courses: [], tasks: [], attempts: [] }));""")
+    cpage = cctx.new_page(); wire(cpage)
+    cpage.goto(BASE + '#/setup')
+    cpage.get_by_role('link', name='Sign in').last.click()
+    cpage.get_by_label('Email').fill('new@diu.edu.bd')
+    cpage.get_by_label('Password').fill('secret123')
+    cpage.get_by_role('button', name='Sign in').click()
+    expect(cpage.get_by_role('heading', name=re.compile('courses|Settings', re.I))).to_be_visible()
+    expect(cpage.locator('[data-teacher]')).to_have_text('Confirmed Teacher')
+    cctx.close()
+
     ctx = browser.new_context(viewport={'width': 1280, 'height': 860})
     wire_routes(ctx)
     page = ctx.new_page(); wire(page)

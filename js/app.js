@@ -119,6 +119,24 @@ document.addEventListener('site-updated', () => {
   renderHeader();
 });
 
+/** Finish signing in: claim the site if it has no teacher, then open Settings. */
+let finishing = null;
+function finishSignIn(session) {
+  finishing ||= (async () => {
+    try {
+      await afterSignIn(session);
+      toast('Your teacher account is ready.');
+      navigate(state.site.ai_ready ? '/teach' : '/settings');
+    } catch (e) {
+      toast(friendlyError(e), 'error');
+      navigate('/');
+    } finally {
+      finishing = null;
+    }
+  })();
+  return finishing;
+}
+
 async function boot() {
   renderBranding();
   if (!configured) {
@@ -137,18 +155,13 @@ async function boot() {
         navigate('/reset?mode=new');
         return;
       }
-      if (state.uid !== before) {
+      if (state.uid !== before || (session && !state.site.has_owner)) {
         await refreshSite();
         const hash = location.hash.slice(1);
-        if (/access_token=|type=signup/.test(hash)) {
-          try {
-            if (session) await afterSignIn(session);
-            toast('Email confirmed. Welcome!');
-            navigate(state.site.ai_ready ? '/teach' : '/settings');
-          } catch (e) {
-            toast(friendlyError(e), 'error');
-            navigate('/');
-          }
+        // The setup and sign-in pages finish signing in themselves.
+        const ownPage = /^\/(setup|login)\b/.test(hash);
+        if (session && !ownPage && (!state.site.has_owner || /access_token=|type=signup/.test(hash))) {
+          await finishSignIn(session);
         } else {
           render();
         }
@@ -163,6 +176,9 @@ async function boot() {
   }
   await refreshSite();
   if (recovering && state.session) location.hash = '#/reset?mode=new';
+  // Signed in (for example from the confirmation email) but the site has no
+  // teacher yet: this account becomes the teacher.
+  else if (state.session && !state.site.has_owner) await finishSignIn(state.session);
 
   window.addEventListener('hashchange', render);
   render();

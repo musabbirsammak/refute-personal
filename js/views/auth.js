@@ -68,6 +68,7 @@ export async function setupView(root) {
         <p class="form-error" hidden></p>
         <button class="btn btn-primary" type="submit">Create teacher account</button>
       </form>
+      <p class="small">Already created your account and confirmed your email? <a href="#/login">Sign in</a></p>
     </section>`);
   const form = $('#setup', root);
   form.addEventListener('submit', async (e) => {
@@ -108,7 +109,6 @@ export async function setupView(root) {
 export async function loginView(root, { query }) {
   const next = query.get('next') || '';
   if (state.isTeacher) { navigate(next || '/teach'); return; }
-  if (!state.site.has_owner) { navigate('/setup'); return; }
   mount(root, html`
     <section class="narrow">
       <h1>Teacher sign in</h1>
