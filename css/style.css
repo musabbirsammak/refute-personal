@@ -377,6 +377,12 @@ mark.wrong { background: none; color: inherit; text-decoration: underline wavy v
 .composer textarea { flex: 1; min-height: 3rem; color: var(--blue); }
 .composer textarea::placeholder { color: #8a93ab; }
 .composer-hint { font-size: 0.78rem; color: var(--ink-soft); margin: 0 1.25rem 0.75rem; }
+.own-key { margin: 0 1.25rem 0.9rem; padding-top: 0.6rem; border-top: 1px dashed var(--rule); }
+.own-key summary { cursor: pointer; font-weight: 700; color: var(--blue); font-size: var(--step--1); }
+.own-key .row { gap: 0.5rem; flex-wrap: wrap; }
+.own-key input { flex: 1; min-width: 12rem; }
+.own-key p { margin: 0.4rem 0; }
+.btn-link { background: none; border: 0; padding: 0; color: var(--blue); text-decoration: underline; cursor: pointer; font: inherit; }
 
 /* ── Results ──────────────────────────────────────────────── */
 

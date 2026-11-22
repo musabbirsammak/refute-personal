@@ -3,7 +3,7 @@ import {
   getTaskPublic, startAttempt, getAttemptPublic, getTask, getAttempt, startPreview, friendlyError,
 } from '../db.js';
 import { state } from '../state.js';
-import { sendTurn, giveUp } from '../ai.js';
+import { sendTurn, giveUp, ownKey, setOwnKey, PROVIDERS } from '../ai.js';
 import { characterName, cleanCriteria } from '../tutor.js';
 import { resultMarkup, studentResultActions } from './result.js';
 
@@ -44,6 +44,7 @@ export async function studentEntryView(root, { params: [taskId] }) {
             <li>You win when ${aiName} admits the claim is wrong. That happens only when you explain the key points with reasons.</li>
             <li>You can send up to <strong>${task.max_turns} messages</strong>. Your progress is saved after each one.</li>
             <li>Closed the page by accident? Open the link again and enter the same student ID to continue.</li>
+            ${state.site.student_keys_required && PROVIDERS[state.site.ai_provider] ? html`<li>Your teacher asks you to use your own free <a href="${PROVIDERS[state.site.ai_provider].keyUrl}" target="_blank" rel="noopener">${PROVIDERS[state.site.ai_provider].label} key</a>. You'll paste it on the next page.</li>` : ''}
           </ul>
         </div>
         <div class="intro-start">
@@ -187,6 +188,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
           <button class="btn btn-primary" type="submit" id="send">Send</button>
         </form>
         <p class="composer-hint">Enter sends. Shift + Enter starts a new line.</p>
+        ${preview ? '' : html`<div class="own-key" id="ownkey"></div>`}
       </section>
     </div>`);
 
@@ -194,6 +196,48 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
   const status = $('#status', root);
   const input = $('#msg', root);
   autoGrow(input);
+
+  // The student's own AI key (not used in the teacher's preview).
+  const provider = state.site.ai_provider;
+  const providerInfo = PROVIDERS[provider];
+  const keyRequired = !preview && Boolean(state.site.student_keys_required);
+  const myKey = () => (preview || !providerInfo ? '' : ownKey(provider));
+  function drawKey() {
+    const box = $('#ownkey', root);
+    if (!box || !providerInfo) return;
+    const key = myKey();
+    if (key) {
+      mount(box, html`
+        <p class="small">Using your own ${providerInfo.label} key ending in ${key.slice(-4)}.
+          <button type="button" class="btn-link" data-key="remove">Remove it</button></p>`);
+      return;
+    }
+    mount(box, html`
+      <details ${keyRequired ? 'open' : ''}>
+        <summary>${keyRequired ? `Add your own ${providerInfo.label} key to start` : `Use your own ${providerInfo.label} key (optional)`}</summary>
+        <p class="small">Get a free key at <a href="${providerInfo.keyUrl}" target="_blank" rel="noopener">${providerInfo.keyUrl.replace('https://', '')}</a> (it ${providerInfo.keyHint}). It stays in this browser and is sent only with your messages. On a shared computer, remove it when you finish.</p>
+        <div class="row">
+          <label class="sr-only" for="ownkey-input">Your ${providerInfo.label} API key</label>
+          <input id="ownkey-input" type="password" autocomplete="off" placeholder="Paste your key">
+          <button type="button" class="btn" data-key="save">Save key</button>
+        </div>
+      </details>`);
+  }
+  $('#ownkey', root)?.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-key]')?.dataset.key;
+    if (action === 'save') {
+      const value = $('#ownkey-input', root).value.trim();
+      if (value.length < 10) { toast("That doesn't look like a complete key.", 'error'); return; }
+      setOwnKey(provider, value);
+      if (['need_key', 'own_key'].includes(error?.kind)) error = null;
+    } else if (action === 'remove') {
+      setOwnKey(provider, '');
+    } else {
+      return;
+    }
+    drawKey();
+    draw();
+  });
 
   const bubble = (m) => (m.role === 'user'
     ? html`<div class="msg msg-student"><span class="who">You</span><div class="bubble">${String(m.content).split('\n').map((l, i) => html`${i ? html`<br>` : ''}${l}`)}</div></div>`
@@ -231,7 +275,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     } else {
       mount(status, '');
     }
-    const off = Boolean(busy) || ['closed', 'finished'].includes(error?.kind);
+    const off = Boolean(busy) || ['closed', 'finished'].includes(error?.kind) || (keyRequired && !myKey());
     input.disabled = off;
     $('#send', root).disabled = off;
     $('#giveup', root).disabled = off;
@@ -261,7 +305,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     input.dispatchEvent(new Event('input'));
     draw();
     try {
-      a = await sendTurn(a.id, token, text);
+      a = await sendTurn(a.id, token, text, myKey());
       pending = '';
       busy = '';
       if (a.status !== 'in_progress') { onFinished(a); return; }
@@ -303,7 +347,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     error = null;
     draw();
     try {
-      a = await giveUp(a.id, token);
+      a = await giveUp(a.id, token, myKey());
       busy = '';
       onFinished(a);
     } catch (ex) {
@@ -313,6 +357,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     }
   });
 
+  drawKey();
   draw();
   drawJudge();
   input.focus();

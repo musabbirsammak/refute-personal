@@ -2,7 +2,7 @@ import { html, mount, $, toast, fmtDate } from '../util.js';
 import { updateSite, friendlyError } from '../db.js';
 import { state } from '../state.js';
 import { refreshSite } from '../session.js';
-import { PROVIDERS, aiStatus, listModels, saveAi, testAi } from '../ai.js';
+import { PROVIDERS, aiStatus, listModels, saveAi, testAi, setStudentKeys } from '../ai.js';
 
 export async function settingsView(root) {
   const s = state.site;
@@ -60,7 +60,7 @@ function renderAiPanel(container) {
         <div class="ai-status ${status?.configured ? 'is-ready' : ''}">
           ${status === null ? html`<p class="muted">Checking your AI settings…</p>`
             : status.configured ? html`
-              <p><strong>Ready.</strong> Students use ${PROVIDERS[status.provider]?.label || status.provider}, model <code>${status.model}</code>, with your key ending in <code>${status.key_hint}</code>.</p>
+              <p><strong>Ready.</strong> Students use ${PROVIDERS[status.provider]?.label || status.provider}, model <code>${status.model}</code>, ${status.require_student_keys ? html`with <strong>their own keys</strong>. Your key (ending in <code>${status.key_hint}</code>) is used only for your previews.` : html`with your key ending in <code>${status.key_hint}</code>. Students may use their own key instead.`}</p>
               ${status.updated_at ? html`<p class="small muted">Last changed ${fmtDate(status.updated_at)}</p>` : ''}`
               : html`<p><strong>Not set up yet.</strong> Students can't start a debate until you save a key and model below.</p>`}
         </div>
@@ -100,7 +100,12 @@ function renderAiPanel(container) {
           <button type="button" class="btn btn-primary" data-action="save" ${busy || !models.length ? 'disabled' : ''}>${busy === 'save' ? 'Checking and saving…' : 'Save AI settings'}</button>
           ${status?.configured ? html`<button type="button" class="btn btn-quiet" data-action="test" ${busy ? 'disabled' : ''}>${busy === 'test' ? 'Testing…' : 'Test saved settings'}</button>` : ''}
         </div>
-        <p class="hint">All your students share this key's limits. Free keys allow a limited number of requests per minute and per day, and each student message uses two. For a whole class at once, check your provider's limits or use a paid key. You can switch any task's link off at any time.</p>
+        ${status?.configured ? html`
+          <label class="check">
+            <input type="checkbox" name="student_keys" ${status.require_student_keys ? 'checked' : ''} ${busy ? 'disabled' : ''}>
+            <span>Students must use their own ${PROVIDERS[status.provider]?.label || ''} key <span class="hint">Each student pastes a free key on the debate page, with the same model you chose. Your key is then used only for your previews, so your limits aren't shared.</span></span>
+          </label>` : ''}
+        <p class="hint">Unless students use their own keys, they all share this key's limits. Free keys allow a limited number of requests per minute and per day, and each student message uses two. For a whole class at once, check your provider's limits or use a paid key. You can switch any task's link off at any time.</p>
       </div>`);
   }
 
@@ -126,6 +131,19 @@ function renderAiPanel(container) {
       if (key) keyInput().value = '';
     }
     if (e.target.name === 'model') model = e.target.value;
+    if (e.target.name === 'student_keys') {
+      const required = e.target.checked;
+      busy = 'keys';
+      draw();
+      setStudentKeys(required)
+        .then(async (r) => {
+          status = r;
+          await refreshSite();
+          toast(required ? 'Students now use their own keys.' : "Students now use your key (or their own, if they add one).");
+        })
+        .catch((ex) => { message = { kind: 'error', text: ex.message }; })
+        .finally(() => { busy = ''; draw(); });
+    }
   });
 
   container.addEventListener('click', async (e) => {

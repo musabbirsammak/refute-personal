@@ -33,6 +33,8 @@ create table if not exists public.ai_settings (
   api_key    text not null check (length(api_key) between 10 and 500),
   updated_at timestamptz not null default now()
 );
+-- When true, students must use their own AI key (the teacher's key is used only for previews).
+alter table public.ai_settings add column if not exists require_student_keys boolean not null default false;
 
 create table if not exists public.courses (
   id          uuid primary key default gen_random_uuid(),
@@ -141,7 +143,10 @@ returns json language sql stable security definer set search_path = '' as $$
     'institution', s.institution,
     'has_owner', s.owner_id is not null,
     'is_owner', s.owner_id is not null and s.owner_id = auth.uid(),
-    'ai_ready', exists (select 1 from public.ai_settings)
+    'ai_ready', exists (select 1 from public.ai_settings),
+    'ai_provider', (select a.provider from public.ai_settings a limit 1),
+    'ai_model', (select a.model from public.ai_settings a limit 1),
+    'student_keys_required', coalesce((select a.require_student_keys from public.ai_settings a limit 1), false)
   )
   from public.app_settings s;
 $$;

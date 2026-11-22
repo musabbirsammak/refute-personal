@@ -270,7 +270,7 @@ export async function runTurn({ attempt, task, message, chat }) {
     const { system, user } = judgePrompt(task, messages);
     judge = parseJudge(await chat({ system, messages: [{ role: 'user', content: user }], json: true, temperature: 0 }), criteria.length);
   } catch (e) {
-    if (e && ['auth', 'quota', 'network', 'model', 'config'].includes(e.kind)) throw e;
+    if (e && ['auth', 'own_key', 'quota', 'network', 'model', 'config'].includes(e.kind)) throw e;
     judge = { met: [], notes: '(The judge could not read this turn.)', ok: false };
   }
   const newly = judge.met.filter((i) => !previousMet.includes(i));
@@ -462,7 +462,7 @@ function reply(body, status = 200) {
 const fail = (message, status = 400, kind = 'other') => reply({ error: message, kind }, status);
 
 /**
- * db: { getUser(jwt), ownerId(), getAttempt(id), getTask(id), getAi(), saveAi(row),
+ * db: { getUser(jwt), ownerId(), getAttempt(id), getTask(id), getAi(), saveAi(row), setStudentKeys(required),
  *       updateAttempt(id, expected, patch), publicAttempt(id, token) }
  * providers: { chat(ai, opts), listModels(provider, key) }
  */
@@ -477,9 +477,28 @@ export function createHandler({ db, providers }) {
     const task = await db.getTask(attempt.task_id);
     if (!task) return { error: fail('This task no longer exists.', 404) };
     if (!task.is_open && !attempt.is_preview) return { error: fail('Your teacher has closed this task.', 403, 'closed') };
-    const ai = await db.getAi();
-    if (!ai) return { error: fail("Your teacher hasn't set up the AI yet.", 409, 'config') };
-    const chat = (opts) => providers.chat(ai, opts);
+    const saved = await db.getAi();
+    if (!saved) return { error: fail("Your teacher hasn't set up the AI yet.", 409, 'config') };
+    // A student may send their own key (same provider and model as the teacher
+    // chose). It is used for this request only and never stored.
+    const ownKey = attempt.is_preview ? '' : String(body.api_key || '').trim().slice(0, 500);
+    if (!ownKey && saved.require_student_keys && !attempt.is_preview) {
+      return { error: fail(`Your teacher asks you to use your own ${PROVIDERS[saved.provider]} key. Add it below the chat.`, 409, 'need_key') };
+    }
+    const ai = ownKey ? { ...saved, api_key: ownKey } : saved;
+    const chat = async (opts) => {
+      try {
+        return await providers.chat(ai, opts);
+      } catch (e) {
+        if (ownKey && e instanceof AiError && e.kind === 'auth') {
+          throw new AiError(`${PROVIDERS[ai.provider]} didn't accept your key. Check it and save it again.`, 'own_key', 400);
+        }
+        if (ownKey && e instanceof AiError && e.kind === 'quota') {
+          throw new AiError("Your key's limit was reached for now. Wait a minute and press Retry.", 'quota', 429);
+        }
+        throw e;
+      }
+    };
     return { id, token, attempt, task: debateTask(task, attempt), ai, chat };
   }
 
@@ -520,6 +539,7 @@ export function createHandler({ db, providers }) {
       provider: ai ? ai.provider : null,
       model: ai ? ai.model : null,
       key_hint: ai ? String(ai.api_key).slice(-4) : null,
+      require_student_keys: Boolean(ai && ai.require_student_keys),
       updated_at: ai ? ai.updated_at || null : null,
     };
   }
@@ -527,6 +547,13 @@ export function createHandler({ db, providers }) {
   async function teacherAction(action, body) {
     const saved = await db.getAi();
     if (action === 'ai_status') return reply(status(saved));
+
+    if (action === 'student_keys') {
+      if (!saved) return fail('Save your AI settings first.', 409, 'config');
+      const required = body.required === true;
+      await db.setStudentKeys(required);
+      return reply(status({ ...saved, require_student_keys: required }));
+    }
 
     if (action === 'test_ai') {
       if (!saved) return fail('Save your AI settings first.', 409, 'config');
@@ -553,7 +580,7 @@ export function createHandler({ db, providers }) {
       const text = await providers.chat({ provider, model, api_key: key }, { system: 'You are a connection test. Reply with exactly the word: ready', messages: [{ role: 'user', content: 'Say ready.' }], temperature: 0 });
       if (!text) return fail('The model replied with nothing. Try another model.', 502, 'empty');
       await db.saveAi({ provider, model, api_key: key });
-      return reply(status({ provider, model, api_key: key, updated_at: nowIso() }));
+      return reply(status({ provider, model, api_key: key, updated_at: nowIso(), require_student_keys: Boolean(saved && saved.require_student_keys) }));
     }
     return fail('Unknown action.');
   }
@@ -571,7 +598,7 @@ export function createHandler({ db, providers }) {
     try {
       if (action === 'turn') return await turn(body);
       if (action === 'give_up') return await giveUp(body);
-      if (['ai_status', 'list_models', 'save_ai', 'test_ai'].includes(action)) {
+      if (['ai_status', 'list_models', 'save_ai', 'test_ai', 'student_keys'].includes(action)) {
         if (!(await requireOwner(req))) return fail('Only the teacher can do this. Sign in again.', 401, 'auth');
         return await teacherAction(action, body);
       }
@@ -622,8 +649,11 @@ export function supabaseDb({ url, serviceKey, fetchImpl }) {
       return (rows && rows[0]) || null;
     },
     async getAi() {
-      const rows = await rest('ai_settings?select=provider,model,api_key,updated_at&limit=1');
+      const rows = await rest('ai_settings?select=provider,model,api_key,updated_at,require_student_keys&limit=1');
       return (rows && rows[0]) || null;
+    },
+    async setStudentKeys(required) {
+      await rest('ai_settings?id=eq.true', { method: 'PATCH', body: { require_student_keys: required }, prefer: 'return=minimal' });
     },
     async saveAi(row) {
       await rest('ai_settings?on_conflict=id', {

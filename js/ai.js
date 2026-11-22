@@ -7,7 +7,7 @@ import { auth } from './db.js';
 export class AiError extends Error {
   constructor(message, kind = 'other', status = 0) {
     super(message);
-    this.kind = kind; // quota | auth | config | model | closed | finished | conflict | network | other
+    this.kind = kind; // quota | auth | own_key | need_key | config | model | closed | finished | conflict | network | other
     this.status = status;
   }
 }
@@ -48,12 +48,29 @@ async function call(action, payload = {}, { asTeacher = false } = {}) {
   return data;
 }
 
+// A student's own key (optional, or required by the teacher). It stays in the
+// student's browser and is sent with each message; the server never stores it.
+const OWN_KEY = 'refute.ownkey.v1';
+export function ownKey(provider) {
+  try {
+    const v = JSON.parse(localStorage.getItem(OWN_KEY) || 'null');
+    return v && v.provider === provider ? String(v.key || '') : '';
+  } catch { return ''; }
+}
+export function setOwnKey(provider, key) {
+  try {
+    if (key) localStorage.setItem(OWN_KEY, JSON.stringify({ provider, key }));
+    else localStorage.removeItem(OWN_KEY);
+  } catch { /* private window */ }
+}
+
 // Students
-export const sendTurn = (attemptId, token, message) => call('turn', { attempt_id: attemptId, token, message }).then((d) => d.attempt);
-export const giveUp = (attemptId, token) => call('give_up', { attempt_id: attemptId, token }).then((d) => d.attempt);
+export const sendTurn = (attemptId, token, message, apiKey = '') => call('turn', { attempt_id: attemptId, token, message, ...(apiKey ? { api_key: apiKey } : {}) }).then((d) => d.attempt);
+export const giveUp = (attemptId, token, apiKey = '') => call('give_up', { attempt_id: attemptId, token, ...(apiKey ? { api_key: apiKey } : {}) }).then((d) => d.attempt);
 
 // Teacher
 export const aiStatus = () => call('ai_status', {}, { asTeacher: true });
 export const listModels = (provider, apiKey) => call('list_models', { provider, api_key: apiKey }, { asTeacher: true });
 export const saveAi = ({ provider, model, apiKey }) => call('save_ai', { provider, model, api_key: apiKey }, { asTeacher: true });
 export const testAi = () => call('test_ai', {}, { asTeacher: true });
+export const setStudentKeys = (required) => call('student_keys', { required }, { asTeacher: true });
