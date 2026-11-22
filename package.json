@@ -1,0 +1,28 @@
+{
+  "name": "refute",
+  "version": "1.0.0",
+  "description": "Students learn by arguing an AI out of its mistakes. An open-source tool for individual teachers: write a flawed claim, share a link, see every argument.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "config": "node scripts/build-config.mjs",
+    "dev": "node scripts/build-config.mjs && node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/serve.mjs dist",
+    "test": "node --test tests/unit/function.test.mjs tests/unit/config.test.mjs"
+  },
+  "keywords": [
+    "education",
+    "ai",
+    "llm",
+    "critical-thinking",
+    "misconceptions",
+    "statistics",
+    "supabase",
+    "edge-functions"
+  ]
+}

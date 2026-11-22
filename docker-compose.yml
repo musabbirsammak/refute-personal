@@ -1,0 +1,15 @@
+# Run Refute on your own server:
+#   cp .env.example .env   (then fill it in)
+#   docker compose up -d
+# Put a reverse proxy with HTTPS (Caddy, nginx, Traefik) in front of it for real use.
+services:
+  refute:
+    build: .
+    image: refute:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+    ports:
+      - "8000:8000"

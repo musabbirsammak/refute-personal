@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+dist
+node_modules
+tests
+docs
+*.md
+!README.md

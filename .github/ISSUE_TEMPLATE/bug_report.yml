@@ -1,0 +1,37 @@
+name: Bug report
+description: Something doesn't work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Who saw it?
+      options: [Teacher, Student, Both, While setting up]
+  - type: dropdown
+    id: provider
+    attributes:
+      label: AI provider
+      options: [Google Gemini, Groq, Not relevant]
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and device
+      placeholder: Chrome 131 on Windows 11 laptop
+  - type: input
+    id: hosting
+    attributes:
+      label: Where is your copy hosted?
+      placeholder: Vercel, Netlify, GitHub Pages, Docker, local
+  - type: textarea
+    id: console
+    attributes:
+      label: Errors from the browser console (optional)
+      description: Press F12, open Console, and paste any red lines. Remove API keys and personal data first.
+      render: text
