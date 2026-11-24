@@ -326,6 +326,18 @@ export function normalizeTurns(messages) {
   return out;
 }
 
+/** Turns the provider's reason for rejecting a student's key into advice. */
+export function keyProblem(detail = '') {
+  const d = String(detail);
+  if (/leak/i.test(d)) return 'It was blocked because it was shared publicly. Create a new key and keep it private.';
+  if (/expired/i.test(d)) return 'It has expired. Create a new key.';
+  if (/not valid|invalid|API_KEY_INVALID|incorrect/i.test(d)) return 'It isn\'t a valid key. Copy the whole key again (a Gemini key starts with AIza, a Groq key with gsk_), then remove the old one and save it again.';
+  if (/has not been used|is disabled|SERVICE_DISABLED|not enabled/i.test(d)) return 'The API isn\'t switched on for this key. Create the key at aistudio.google.com/apikey instead of Google Cloud.';
+  if (/restrict|referer|referrer|blocked/i.test(d)) return 'The key has restrictions that block this use. Create a new key without restrictions.';
+  if (/permission|denied|organi[sz]ation|admin|policy/i.test(d)) return 'Your account isn\'t allowed to use it (university Google accounts often aren\'t). Create the key with a personal Gmail account.';
+  return d ? `The reason given was: "${d}"` : 'Check it, then remove it and save it again.';
+}
+
 async function providerError(res, provider, model) {
   let detail = '';
   try {
@@ -341,7 +353,9 @@ async function providerError(res, provider, model) {
   detail = String(detail).slice(0, 200);
   const s = res.status;
   if (s === 401 || s === 403 || (s === 400 && /api[_ ]?key/i.test(detail))) {
-    return new AiError(`${provider} didn't accept the API key.`, 'auth', 502);
+    const err = new AiError(`${provider} didn't accept the API key.`, 'auth', 502);
+    err.detail = detail;
+    return err;
   }
   if (s === 429) return new AiError(`The AI's limit was reached for now. Wait a minute and press Retry.`, 'quota', 429);
   if (s === 404) return new AiError(`${provider} doesn't offer the model "${model}" to this key.`, 'model', 502);
@@ -491,7 +505,7 @@ export function createHandler({ db, providers }) {
         return await providers.chat(ai, opts);
       } catch (e) {
         if (ownKey && e instanceof AiError && e.kind === 'auth') {
-          throw new AiError(`${PROVIDERS[ai.provider]} didn't accept your key. Check it and save it again.`, 'own_key', 400);
+          throw new AiError(`${PROVIDERS[ai.provider]} didn't accept your key. ${keyProblem(e.detail)}`, 'own_key', 400);
         }
         if (ownKey && e instanceof AiError && e.kind === 'quota') {
           throw new AiError("Your key's limit was reached for now. Wait a minute and press Retry.", 'quota', 429);

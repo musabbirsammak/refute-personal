@@ -226,7 +226,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
   $('#ownkey', root)?.addEventListener('click', (e) => {
     const action = e.target.closest('[data-key]')?.dataset.key;
     if (action === 'save') {
-      const value = $('#ownkey-input', root).value.trim();
+      const value = $('#ownkey-input', root).value.replace(/[\s\u200B-\u200D\uFEFF]+/g, '');
       if (value.length < 10) { toast("That doesn't look like a complete key.", 'error'); return; }
       setOwnKey(provider, value);
       if (['need_key', 'own_key'].includes(error?.kind)) error = null;
