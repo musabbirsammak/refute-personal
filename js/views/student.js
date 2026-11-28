@@ -3,7 +3,7 @@ import {
   getTaskPublic, startAttempt, getAttemptPublic, getTask, getAttempt, startPreview, friendlyError,
 } from '../db.js';
 import { state } from '../state.js';
-import { sendTurn, giveUp, ownKey, setOwnKey, PROVIDERS } from '../ai.js';
+import { sendTurn, giveUp, studentModels, ownKey, ownChoice, setOwnKey, PROVIDERS } from '../ai.js';
 import { characterName, cleanCriteria } from '../tutor.js';
 import { resultMarkup, studentResultActions } from './result.js';
 
@@ -44,7 +44,9 @@ export async function studentEntryView(root, { params: [taskId] }) {
             <li>You win when ${aiName} admits the claim is wrong. That happens only when you explain the key points with reasons.</li>
             <li>You can send up to <strong>${task.max_turns} messages</strong>. Your progress is saved after each one.</li>
             <li>Closed the page by accident? Open the link again and enter the same student ID to continue.</li>
-            ${state.site.student_keys_required && PROVIDERS[state.site.ai_provider] ? html`<li>Your teacher asks you to use your own free <a href="${PROVIDERS[state.site.ai_provider].keyUrl}" target="_blank" rel="noopener">${PROVIDERS[state.site.ai_provider].label} key</a>. You'll paste it on the next page.</li>` : ''}
+            ${state.site.student_choice
+              ? html`<li>You'll need your own free AI key: <a href="${PROVIDERS.groq.keyUrl}" target="_blank" rel="noopener">Groq</a> or <a href="${PROVIDERS.gemini.keyUrl}" target="_blank" rel="noopener">Gemini</a>. You'll paste it on the next page.</li>`
+              : state.site.student_keys_required && PROVIDERS[state.site.ai_provider] ? html`<li>Your teacher asks you to use your own free <a href="${PROVIDERS[state.site.ai_provider].keyUrl}" target="_blank" rel="noopener">${PROVIDERS[state.site.ai_provider].label} key</a>. You'll paste it on the next page.</li>` : ''}
           </ul>
         </div>
         <div class="intro-start">
@@ -198,43 +200,112 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
   autoGrow(input);
 
   // The student's own AI key (not used in the teacher's preview).
+  // Teacher's model mode: the key runs the teacher's provider and model.
+  // Students-choose mode: the student picks Gemini or Groq and a model too.
+  const choose = !preview && Boolean(state.site.student_choice);
   const provider = state.site.ai_provider;
   const providerInfo = PROVIDERS[provider];
-  const keyRequired = !preview && Boolean(state.site.student_keys_required);
-  const myKey = () => (preview || !providerInfo ? '' : ownKey(provider));
+  const keyRequired = choose || (!preview && Boolean(state.site.student_keys_required));
+  let pick = { provider: ownChoice()?.provider || 'groq', key: '', models: [], model: '', checking: false };
+  const myAi = () => {
+    if (preview) return {};
+    if (choose) {
+      const c = ownChoice();
+      return c && c.model ? { api_key: c.key, provider: c.provider, model: c.model } : {};
+    }
+    const key = providerInfo ? ownKey(provider) : '';
+    return key ? { api_key: key } : {};
+  };
+  const hasKey = () => Boolean(myAi().api_key);
+  const cleanKey = (v) => v.replace(/[\s​-‍﻿]+/g, '');
+
   function drawKey() {
     const box = $('#ownkey', root);
-    if (!box || !providerInfo) return;
-    const key = myKey();
-    if (key) {
+    if (!box || (!choose && !providerInfo)) return;
+    const mine = myAi();
+    if (mine.api_key) {
+      const label = PROVIDERS[mine.provider || provider].label;
       mount(box, html`
-        <p class="small">Using your own ${providerInfo.label} key ending in ${key.slice(-4)}.
-          <button type="button" class="btn-link" data-key="remove">Remove it</button></p>`);
+        <p class="small">Using your own ${label} key ending in ${mine.api_key.slice(-4)}${mine.model ? html` with <code>${mine.model}</code>` : ''}.
+          <button type="button" class="btn-link" data-key="remove">${choose ? 'Change' : 'Remove it'}</button></p>`);
       return;
     }
+    if (!choose) {
+      mount(box, html`
+        <details ${keyRequired ? 'open' : ''}>
+          <summary>${keyRequired ? `Add your own ${providerInfo.label} key to start` : `Use your own ${providerInfo.label} key (optional)`}</summary>
+          <p class="small">Get a free key at <a href="${providerInfo.keyUrl}" target="_blank" rel="noopener">${providerInfo.keyUrl.replace('https://', '')}</a> (it ${providerInfo.keyHint}). It stays in this browser and is sent only with your messages. On a shared computer, remove it when you finish.</p>
+          <div class="row">
+            <label class="sr-only" for="ownkey-input">Your ${providerInfo.label} API key</label>
+            <input id="ownkey-input" type="password" autocomplete="off" placeholder="Paste your key">
+            <button type="button" class="btn" data-key="save">Save key</button>
+          </div>
+        </details>`);
+      return;
+    }
+    const info = PROVIDERS[pick.provider];
     mount(box, html`
-      <details ${keyRequired ? 'open' : ''}>
-        <summary>${keyRequired ? `Add your own ${providerInfo.label} key to start` : `Use your own ${providerInfo.label} key (optional)`}</summary>
-        <p class="small">Get a free key at <a href="${providerInfo.keyUrl}" target="_blank" rel="noopener">${providerInfo.keyUrl.replace('https://', '')}</a> (it ${providerInfo.keyHint}). It stays in this browser and is sent only with your messages. On a shared computer, remove it when you finish.</p>
-        <div class="row">
-          <label class="sr-only" for="ownkey-input">Your ${providerInfo.label} API key</label>
-          <input id="ownkey-input" type="password" autocomplete="off" placeholder="Paste your key">
-          <button type="button" class="btn" data-key="save">Save key</button>
+      <details open>
+        <summary>Add your own AI key to start</summary>
+        <p class="small">Choose Gemini or Groq and paste a free key. It stays in this browser and is sent only with your messages. On a shared computer, press Change when you finish.</p>
+        <div class="row" role="radiogroup" aria-label="AI provider">
+          ${Object.entries(PROVIDERS).map(([k, v]) => html`
+            <label class="check"><input type="radio" name="own-provider" value="${k}" ${k === pick.provider ? 'checked' : ''}> ${v.label}</label>`)}
         </div>
+        <p class="small">Get a free ${info.label} key at <a href="${info.keyUrl}" target="_blank" rel="noopener">${info.keyUrl.replace('https://', '')}</a> (it ${info.keyHint}).</p>
+        <div class="row">
+          <label class="sr-only" for="ownkey-input">Your ${info.label} API key</label>
+          <input id="ownkey-input" type="password" autocomplete="off" placeholder="Paste your key" value="${pick.key}">
+          <button type="button" class="btn" data-key="check" ${pick.checking ? 'disabled' : ''}>${pick.checking ? 'Checking…' : 'Check key'}</button>
+        </div>
+        ${pick.models.length ? html`
+          <div class="row">
+            <label for="ownkey-model">Model</label>
+            <select id="ownkey-model">${pick.models.map((m) => html`<option value="${m}" ${m === pick.model ? 'selected' : ''}>${m}</option>`)}</select>
+            <button type="button" class="btn btn-primary" data-key="use">Use this key</button>
+          </div>` : ''}
       </details>`);
   }
-  $('#ownkey', root)?.addEventListener('click', (e) => {
+
+  $('#ownkey', root)?.addEventListener('change', (e) => {
+    if (e.target.name === 'own-provider') {
+      pick = { ...pick, provider: e.target.value, key: cleanKey($('#ownkey-input', root).value), models: [], model: '' };
+      drawKey();
+    }
+    if (e.target.id === 'ownkey-model') pick.model = e.target.value;
+  });
+  $('#ownkey', root)?.addEventListener('click', async (e) => {
     const action = e.target.closest('[data-key]')?.dataset.key;
+    if (!action) return;
     if (action === 'save') {
-      const value = $('#ownkey-input', root).value.replace(/[\s\u200B-\u200D\uFEFF]+/g, '');
+      const value = cleanKey($('#ownkey-input', root).value);
       if (value.length < 10) { toast("That doesn't look like a complete key.", 'error'); return; }
       setOwnKey(provider, value);
-      if (['need_key', 'own_key'].includes(error?.kind)) error = null;
-    } else if (action === 'remove') {
-      setOwnKey(provider, '');
-    } else {
+    } else if (action === 'check') {
+      pick.key = cleanKey($('#ownkey-input', root).value);
+      if (pick.key.length < 10) { toast("That doesn't look like a complete key.", 'error'); return; }
+      pick.checking = true;
+      drawKey();
+      try {
+        const r = await studentModels(a.id, token, pick.provider, pick.key);
+        pick.models = r.models || [];
+        pick.model = r.suggested || pick.models[0] || '';
+        if (!pick.models.length) toast('This key has no chat models.', 'error');
+      } catch (ex) {
+        toast(ex.message, 'error');
+      } finally {
+        pick.checking = false;
+      }
+      drawKey();
       return;
+    } else if (action === 'use') {
+      pick.model = $('#ownkey-model', root).value;
+      setOwnKey(pick.provider, pick.key, pick.model);
+    } else if (action === 'remove') {
+      setOwnKey(choose ? (ownChoice()?.provider || provider) : provider, '');
+      pick = { ...pick, key: '', models: [], model: '' };
     }
+    if (['need_key', 'own_key'].includes(error?.kind)) error = null;
     drawKey();
     draw();
   });
@@ -275,7 +346,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     } else {
       mount(status, '');
     }
-    const off = Boolean(busy) || ['closed', 'finished'].includes(error?.kind) || (keyRequired && !myKey());
+    const off = Boolean(busy) || ['closed', 'finished'].includes(error?.kind) || (keyRequired && !hasKey());
     input.disabled = off;
     $('#send', root).disabled = off;
     $('#giveup', root).disabled = off;
@@ -305,7 +376,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     input.dispatchEvent(new Event('input'));
     draw();
     try {
-      a = await sendTurn(a.id, token, text, myKey());
+      a = await sendTurn(a.id, token, text, myAi());
       pending = '';
       busy = '';
       if (a.status !== 'in_progress') { onFinished(a); return; }
@@ -347,7 +418,7 @@ export function renderDebate(root, { attempt, token, onFinished, preview = null 
     error = null;
     draw();
     try {
-      a = await giveUp(a.id, token, myKey());
+      a = await giveUp(a.id, token, myAi());
       busy = '';
       onFinished(a);
     } catch (ex) {

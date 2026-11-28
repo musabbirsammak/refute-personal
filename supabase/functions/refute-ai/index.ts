@@ -476,7 +476,7 @@ function reply(body, status = 200) {
 const fail = (message, status = 400, kind = 'other') => reply({ error: message, kind }, status);
 
 /**
- * db: { getUser(jwt), ownerId(), getAttempt(id), getTask(id), getAi(), saveAi(row), setStudentKeys(required),
+ * db: { getUser(jwt), ownerId(), getAttempt(id), getTask(id), getAi(), saveAi(row), setStudentKeys(required, choice),
  *       updateAttempt(id, expected, patch), publicAttempt(id, token) }
  * providers: { chat(ai, opts), listModels(provider, key) }
  */
@@ -493,13 +493,24 @@ export function createHandler({ db, providers }) {
     if (!task.is_open && !attempt.is_preview) return { error: fail('Your teacher has closed this task.', 403, 'closed') };
     const saved = await db.getAi();
     if (!saved) return { error: fail("Your teacher hasn't set up the AI yet.", 409, 'config') };
-    // A student may send their own key (same provider and model as the teacher
-    // chose). It is used for this request only and never stored.
+    // A student may send their own key. It is used for this request only and
+    // never stored. Normally it runs the teacher's provider and model; when the
+    // teacher lets students choose, the student also sends a provider and model.
     const ownKey = attempt.is_preview ? '' : String(body.api_key || '').trim().slice(0, 500);
-    if (!ownKey && saved.require_student_keys && !attempt.is_preview) {
+    const choose = Boolean(saved.student_choice) && !attempt.is_preview;
+    let ai = saved;
+    if (choose) {
+      const provider = String(body.provider || '');
+      const model = String(body.model || '').trim().slice(0, 100);
+      if (!ownKey || !PROVIDERS[provider] || !model) {
+        return { error: fail('Add your own AI key and choose a model below the chat.', 409, 'need_key') };
+      }
+      ai = { provider, model, api_key: ownKey };
+    } else if (ownKey) {
+      ai = { ...saved, api_key: ownKey };
+    } else if (saved.require_student_keys && !attempt.is_preview) {
       return { error: fail(`Your teacher asks you to use your own ${PROVIDERS[saved.provider]} key. Add it below the chat.`, 409, 'need_key') };
     }
-    const ai = ownKey ? { ...saved, api_key: ownKey } : saved;
     const chat = async (opts) => {
       try {
         return await providers.chat(ai, opts);
@@ -514,6 +525,29 @@ export function createHandler({ db, providers }) {
       }
     };
     return { id, token, attempt, task: debateTask(task, attempt), ai, chat };
+  }
+
+  // A student checks their own key and gets the models it can use
+  // (only from a real, unfinished debate).
+  async function studentModels(body) {
+    const id = String(body.attempt_id || '');
+    const token = String(body.token || '');
+    const attempt = UUID.test(id) && token ? await db.getAttempt(id) : null;
+    if (!attempt || attempt.token !== token) return fail("This debate link isn't valid.", 404);
+    if (attempt.status !== 'in_progress') return fail('This debate has already finished.', 409, 'finished');
+    const provider = String(body.provider || '');
+    const key = String(body.api_key || '').trim().slice(0, 500);
+    if (!PROVIDERS[provider]) return fail('Choose Gemini or Groq.');
+    if (!key) return fail('Paste your key first.');
+    try {
+      const models = await providers.listModels(provider, key);
+      return reply({ models, suggested: pickDefaultModel(provider, models) });
+    } catch (e) {
+      if (e instanceof AiError && e.kind === 'auth') {
+        return fail(`${PROVIDERS[provider]} didn't accept your key. ${keyProblem(e.detail)}`, 400, 'own_key');
+      }
+      throw e;
+    }
   }
 
   async function save(d, patch) {
@@ -554,6 +588,7 @@ export function createHandler({ db, providers }) {
       model: ai ? ai.model : null,
       key_hint: ai ? String(ai.api_key).slice(-4) : null,
       require_student_keys: Boolean(ai && ai.require_student_keys),
+      student_choice: Boolean(ai && ai.student_choice),
       updated_at: ai ? ai.updated_at || null : null,
     };
   }
@@ -564,9 +599,10 @@ export function createHandler({ db, providers }) {
 
     if (action === 'student_keys') {
       if (!saved) return fail('Save your AI settings first.', 409, 'config');
-      const required = body.required === true;
-      await db.setStudentKeys(required);
-      return reply(status({ ...saved, require_student_keys: required }));
+      const required = body.required === undefined ? Boolean(saved.require_student_keys) : body.required === true;
+      const choice = body.choice === undefined ? Boolean(saved.student_choice) : body.choice === true;
+      await db.setStudentKeys(required, choice);
+      return reply(status({ ...saved, require_student_keys: required, student_choice: choice }));
     }
 
     if (action === 'test_ai') {
@@ -594,7 +630,7 @@ export function createHandler({ db, providers }) {
       const text = await providers.chat({ provider, model, api_key: key }, { system: 'You are a connection test. Reply with exactly the word: ready', messages: [{ role: 'user', content: 'Say ready.' }], temperature: 0 });
       if (!text) return fail('The model replied with nothing. Try another model.', 502, 'empty');
       await db.saveAi({ provider, model, api_key: key });
-      return reply(status({ provider, model, api_key: key, updated_at: nowIso(), require_student_keys: Boolean(saved && saved.require_student_keys) }));
+      return reply(status({ provider, model, api_key: key, updated_at: nowIso(), require_student_keys: Boolean(saved && saved.require_student_keys), student_choice: Boolean(saved && saved.student_choice) }));
     }
     return fail('Unknown action.');
   }
@@ -611,6 +647,7 @@ export function createHandler({ db, providers }) {
     const action = String((body && body.action) || '');
     try {
       if (action === 'turn') return await turn(body);
+      if (action === 'student_models') return await studentModels(body);
       if (action === 'give_up') return await giveUp(body);
       if (['ai_status', 'list_models', 'save_ai', 'test_ai', 'student_keys'].includes(action)) {
         if (!(await requireOwner(req))) return fail('Only the teacher can do this. Sign in again.', 401, 'auth');
@@ -663,11 +700,11 @@ export function supabaseDb({ url, serviceKey, fetchImpl }) {
       return (rows && rows[0]) || null;
     },
     async getAi() {
-      const rows = await rest('ai_settings?select=provider,model,api_key,updated_at,require_student_keys&limit=1');
+      const rows = await rest('ai_settings?select=provider,model,api_key,updated_at,require_student_keys,student_choice&limit=1');
       return (rows && rows[0]) || null;
     },
-    async setStudentKeys(required) {
-      await rest('ai_settings?id=eq.true', { method: 'PATCH', body: { require_student_keys: required }, prefer: 'return=minimal' });
+    async setStudentKeys(required, choice) {
+      await rest('ai_settings?id=eq.true', { method: 'PATCH', body: { require_student_keys: required, student_choice: choice }, prefer: 'return=minimal' });
     },
     async saveAi(row) {
       await rest('ai_settings?on_conflict=id', {

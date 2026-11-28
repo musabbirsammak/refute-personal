@@ -60,7 +60,7 @@ function renderAiPanel(container) {
         <div class="ai-status ${status?.configured ? 'is-ready' : ''}">
           ${status === null ? html`<p class="muted">Checking your AI settings…</p>`
             : status.configured ? html`
-              <p><strong>Ready.</strong> Students use ${PROVIDERS[status.provider]?.label || status.provider}, model <code>${status.model}</code>, ${status.require_student_keys ? html`with <strong>their own keys</strong>. Your key (ending in <code>${status.key_hint}</code>) is used only for your previews.` : html`with your key ending in <code>${status.key_hint}</code>. Students may use their own key instead.`}</p>
+              <p><strong>Ready.</strong> ${status.student_choice ? html`Students use <strong>their own keys and models</strong> (Gemini or Groq). Your ${PROVIDERS[status.provider]?.label || status.provider} key ending in <code>${status.key_hint}</code>, with <code>${status.model}</code>, is used only for your previews.</p>` : html`Students use ${PROVIDERS[status.provider]?.label || status.provider}, model <code>${status.model}</code>, ${status.require_student_keys ? html`with <strong>their own keys</strong>. Your key (ending in <code>${status.key_hint}</code>) is used only for your previews.` : html`with your key ending in <code>${status.key_hint}</code>. Students may use their own key instead.`}</p>`}
               ${status.updated_at ? html`<p class="small muted">Last changed ${fmtDate(status.updated_at)}</p>` : ''}`
               : html`<p><strong>Not set up yet.</strong> Students can't start a debate until you save a key and model below.</p>`}
         </div>
@@ -101,10 +101,22 @@ function renderAiPanel(container) {
           ${status?.configured ? html`<button type="button" class="btn btn-quiet" data-action="test" ${busy ? 'disabled' : ''}>${busy === 'test' ? 'Testing…' : 'Test saved settings'}</button>` : ''}
         </div>
         ${status?.configured ? html`
-          <label class="check">
-            <input type="checkbox" name="student_keys" ${status.require_student_keys ? 'checked' : ''} ${busy ? 'disabled' : ''}>
-            <span>Students must use their own ${PROVIDERS[status.provider]?.label || ''} key <span class="hint">Each student pastes a free key on the debate page, with the same model you chose. Your key is then used only for your previews, so your limits aren't shared.</span></span>
-          </label>` : ''}
+          <fieldset class="ai-mode">
+            <legend>Which AI students use</legend>
+            <label class="check">
+              <input type="radio" name="student_mode" value="mine" ${status.student_choice ? '' : 'checked'} ${busy ? 'disabled' : ''}>
+              <span>My model for everyone <span class="hint">Every student uses ${PROVIDERS[status.provider]?.label || ''} <code>${status.model}</code>, so results are comparable.</span></span>
+            </label>
+            ${status.student_choice ? '' : html`
+              <label class="check sub">
+                <input type="checkbox" name="student_keys" ${status.require_student_keys ? 'checked' : ''} ${busy ? 'disabled' : ''}>
+                <span>Students must use their own ${PROVIDERS[status.provider]?.label || ''} key <span class="hint">Each student pastes a free key on the debate page. Your key is then used only for your previews, so your limits aren't shared.</span></span>
+              </label>`}
+            <label class="check">
+              <input type="radio" name="student_mode" value="choice" ${status.student_choice ? 'checked' : ''} ${busy ? 'disabled' : ''}>
+              <span>Students choose <span class="hint">Each student uses their own free key with Gemini or Groq and picks a model. Your key is used only for your previews. The model each student used is shown in the results.</span></span>
+            </label>
+          </fieldset>` : ''}
         <p class="hint">Unless students use their own keys, they all share this key's limits. Free keys allow a limited number of requests per minute and per day, and each student message uses two. For a whole class at once, check your provider's limits or use a paid key. You can switch any task's link off at any time.</p>
       </div>`);
   }
@@ -131,15 +143,17 @@ function renderAiPanel(container) {
       if (key) keyInput().value = '';
     }
     if (e.target.name === 'model') model = e.target.value;
-    if (e.target.name === 'student_keys') {
-      const required = e.target.checked;
+    if (e.target.name === 'student_keys' || e.target.name === 'student_mode') {
+      const options = e.target.name === 'student_keys' ? { required: e.target.checked } : { choice: e.target.value === 'choice' };
       busy = 'keys';
       draw();
-      setStudentKeys(required)
+      setStudentKeys(options)
         .then(async (r) => {
           status = r;
           await refreshSite();
-          toast(required ? 'Students now use their own keys.' : "Students now use your key (or their own, if they add one).");
+          toast(r.student_choice ? 'Students now choose their own AI and key.'
+            : r.require_student_keys ? 'Students now use your model with their own keys.'
+              : 'Students now use your model and key (or their own key, if they add one).');
         })
         .catch((ex) => { message = { kind: 'error', text: ex.message }; })
         .finally(() => { busy = ''; draw(); });

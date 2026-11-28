@@ -382,6 +382,10 @@ mark.wrong { background: none; color: inherit; text-decoration: underline wavy v
 .own-key .row { gap: 0.5rem; flex-wrap: wrap; }
 .own-key input { flex: 1; min-width: 12rem; }
 .own-key p { margin: 0.4rem 0; }
+.ai-mode { border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem 0.9rem 0.3rem; margin: 1rem 0; }
+.ai-mode legend { font-weight: 700; padding: 0 0.3rem; }
+.ai-mode .check.sub { margin-left: 1.6rem; }
+.own-key select { flex: 1; min-width: 12rem; }
 .btn-link { background: none; border: 0; padding: 0; color: var(--blue); text-decoration: underline; cursor: pointer; font: inherit; }
 
 /* ── Results ──────────────────────────────────────────────── */

@@ -57,20 +57,28 @@ export function ownKey(provider) {
     return v && v.provider === provider ? String(v.key || '') : '';
   } catch { return ''; }
 }
-export function setOwnKey(provider, key) {
+/** The saved key with its provider and model (when the student chose them). */
+export function ownChoice() {
   try {
-    if (key) localStorage.setItem(OWN_KEY, JSON.stringify({ provider, key }));
+    const v = JSON.parse(localStorage.getItem(OWN_KEY) || 'null');
+    return v && v.key && PROVIDERS[v.provider] ? { provider: v.provider, key: String(v.key), model: String(v.model || '') } : null;
+  } catch { return null; }
+}
+export function setOwnKey(provider, key, model = '') {
+  try {
+    if (key) localStorage.setItem(OWN_KEY, JSON.stringify({ provider, key, model }));
     else localStorage.removeItem(OWN_KEY);
   } catch { /* private window */ }
 }
 
-// Students
-export const sendTurn = (attemptId, token, message, apiKey = '') => call('turn', { attempt_id: attemptId, token, message, ...(apiKey ? { api_key: apiKey } : {}) }).then((d) => d.attempt);
-export const giveUp = (attemptId, token, apiKey = '') => call('give_up', { attempt_id: attemptId, token, ...(apiKey ? { api_key: apiKey } : {}) }).then((d) => d.attempt);
+// Students. `own` is {} or { api_key } or { api_key, provider, model }.
+export const sendTurn = (attemptId, token, message, own = {}) => call('turn', { attempt_id: attemptId, token, message, ...own }).then((d) => d.attempt);
+export const giveUp = (attemptId, token, own = {}) => call('give_up', { attempt_id: attemptId, token, ...own }).then((d) => d.attempt);
+export const studentModels = (attemptId, token, provider, apiKey) => call('student_models', { attempt_id: attemptId, token, provider, api_key: apiKey });
 
 // Teacher
 export const aiStatus = () => call('ai_status', {}, { asTeacher: true });
 export const listModels = (provider, apiKey) => call('list_models', { provider, api_key: apiKey }, { asTeacher: true });
 export const saveAi = ({ provider, model, apiKey }) => call('save_ai', { provider, model, api_key: apiKey }, { asTeacher: true });
 export const testAi = () => call('test_ai', {}, { asTeacher: true });
-export const setStudentKeys = (required) => call('student_keys', { required }, { asTeacher: true });
+export const setStudentKeys = (options) => call('student_keys', options, { asTeacher: true });
